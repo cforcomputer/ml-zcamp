@@ -1,0 +1,194 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Camp Training Data</title>
+  <style>
+    body {
+      background: #1a1a1a;
+      color: #ffffff;
+      font-family: Arial, sans-serif;
+    }
+    .camp-list {
+      padding: 20px;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    .camp-card {
+      border: 1px solid #333;
+      margin: 10px 0;
+      padding: 15px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.7);
+    }
+    .camp-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .kill-list {
+      margin: 10px 0;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .kill-entry {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .kill-link {
+      color: #66b3ff;
+      text-decoration: none;
+    }
+    .kill-link:hover {
+      text-decoration: underline;
+    }
+    .categorization {
+      margin-top: 10px;
+      display: flex;
+      gap: 10px;
+    }
+    .button {
+      padding: 8px 20px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+      transition: opacity 0.2s;
+    }
+    .button:hover {
+      opacity: 0.8;
+    }
+    .yes-button {
+      background: #44ff44;
+      color: black;
+    }
+    .no-button {
+      background: #ff4444;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+    <div id="camp-list" class="camp-list"></div>
+
+    <script>
+        // Now we can safely interact with the DOM and Electron APIs
+        window.addEventListener('DOMContentLoaded', () => {
+          let camps = new Map();
+            const CAMP_TIMEOUT = 60 * 60 * 1000; // 1 hour
+
+            function formatTime(timestamp) {
+              return new Date(timestamp).toLocaleString();
+            }
+
+            function isGateCamp(killmail) {
+              return killmail.pinpoints?.nearestCelestial?.name
+                .toLowerCase()
+                .includes('stargate');
+            }
+
+            function updateCamps(killmail) {
+              if (!isGateCamp(killmail)) return;
+
+              const systemId = killmail.killmail.solar_system_id;
+              const stargateName = killmail.pinpoints.nearestCelestial.name;
+              const campId = `${systemId}-${stargateName}`;
+
+              // Clean expired camps
+              const now = Date.now();
+              for (const [id, camp] of camps) {
+                const lastKillTime = new Date(camp.lastKill).getTime();
+                if (now - lastKillTime > CAMP_TIMEOUT) {
+                  camps.delete(id);
+                }
+              }
+
+              // Update or create camp
+              if (camps.has(campId)) {
+                const camp = camps.get(campId);
+                camp.kills.push(killmail);
+                camp.lastKill = killmail.killmail.killmail_time;
+              } else {
+                camps.set(campId, {
+                  id: campId,
+                  systemId,
+                  stargateName,
+                  kills: [killmail],
+                  lastKill: killmail.killmail.killmail_time,
+                  firstKill: killmail.killmail.killmail_time
+                });
+              }
+
+              renderCamps();
+            }
+
+            function renderCamps() {
+              const container = document.getElementById('camp-list');
+              container.innerHTML = '';
+
+              for (const camp of camps.values()) {
+                const campEl = document.createElement('div');
+                campEl.className = 'camp-card';
+                
+                campEl.innerHTML = `
+                  <div class="camp-header">
+                    <h3>${camp.stargateName}</h3>
+                    <span>${formatTime(camp.firstKill)} - ${formatTime(camp.lastKill)}</span>
+                  </div>
+                  <div class="kill-list">
+                    ${camp.kills.map(kill => `
+                      <div class="kill-entry">
+                        <span>${formatTime(kill.killmail.killmail_time)}</span>
+                        <a href="https://zkillboard.com/kill/${kill.killID}/" 
+                           class="kill-link" 
+                           target="_blank">
+                          Killmail #${kill.killID}
+                        </a>
+                      </div>
+                    `).join('')}
+                  </div>
+                  <div class="categorization">
+                    <button class="button yes-button" onclick="categorize('${camp.id}', true)">
+                      Real Camp
+                    </button>
+                    <button class="button no-button" onclick="categorize('${camp.id}', false)">
+                      Not a Camp
+                    </button>
+                  </div>
+                `;
+
+                container.appendChild(campEl);
+              }
+            }
+
+            async function categorize(campId, isRealCamp) {
+              try {
+                const camp = camps.get(campId);
+                if (!camp) return;
+
+                await window.electronAPI.saveCampLabel(camp, isRealCamp);
+                camps.delete(campId);
+                renderCamps();
+              } catch (err) {
+                console.error('Error saving camp label:', err);
+              }
+            }
+
+            // Set up event listeners
+            window.electronAPI.onNewKillmail((killmail) => {
+              updateCamps(killmail);
+            });
+
+            window.electronAPI.onInitialData((data) => {
+              if (data.killmails) {
+                data.killmails.forEach(killmail => updateCamps(killmail));
+              }
+            });
+        });
+    </script>
+</body>
+</html>
