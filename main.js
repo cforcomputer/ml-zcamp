@@ -1,4 +1,3 @@
-// main.js
 const { app, BrowserWindow, ipcMain } = require("electron");
 const io = require("socket.io-client");
 const { TrainingDB } = require("./db");
@@ -42,8 +41,9 @@ async function createWindow() {
     console.log("Disconnected from server:", reason);
   });
 
-  socket.on("newKillmail", (killmail) => {
+  socket.on("newKillmail", async (killmail) => {
     console.log("Received killmail:", killmail.killID);
+    await trainingDB.saveUnlabeledKillmail(killmail);
     mainWindow.webContents.send("newKillmail", killmail);
   });
   socket.on("initialRoams", (data) => {
@@ -53,17 +53,27 @@ async function createWindow() {
 }
 
 // IPC Handlers
-ipcMain.handle("saveCampLabel", async (_, camp, isRealCamp) => {
+ipcMain.handle("getUnlabeledKillmails", async () => {
   try {
-    return await trainingDB.saveCampLabel(camp, isRealCamp);
+    const killmails = await trainingDB.getUnlabeledKillmails();
+    return killmails;
   } catch (error) {
-    console.error("Error saving camp label:", error);
+    console.error("Error fetching unlabeled killmails:", error);
+    throw error;
+  }
+});
+
+ipcMain.handle("labelKillmail", async (_, killmailId, isCamp) => {
+  try {
+    await trainingDB.labelKillmail(killmailId, isCamp);
+  } catch (error) {
+    console.error("Error labeling killmail:", error);
     throw error;
   }
 });
 
 app.whenReady().then(async () => {
-  await trainingDB.initializeDB(); // Now initialize the database when app is ready
+  await trainingDB.initializeDB();
   createWindow();
 });
 
